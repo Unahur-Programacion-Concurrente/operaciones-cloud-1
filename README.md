@@ -1,4 +1,5 @@
 # Laboratorio Cloud Computing
+
 ## Regiones y Servicios AWS
 
 [https://aws.amazon.com/about-aws/global-infrastructure/\#AWS\_Global\_Infrastructure\_Map](https://aws.amazon.com/about-aws/global-infrastructure/)
@@ -173,8 +174,6 @@
 
 17. Probar la conexión de consola (shell) con la instancia.
 
-### 
-
 ### 3.3. Configurar la conexión entre la base de datos y la instancia EC2
 
 1. En la consola de AWS buscar el servicio **RDS**
@@ -193,15 +192,84 @@
 
 8. Ir al final de la página y hacer click en **Configurar**
 
-### 3.4. Probar conectividad de la instancia EC2 con la base de datos
+### 3.4. Instalar Docker en la instancia EC2
 
-Debe tener a mano el valor del endpoint de la base de datos copiado en el paso 1\.
+1. Abrir una conexión de consola con la instancia EC2 (usando ssh o por EC2 instance connect)
 
-Ejemplo: `database-1.cjxro5kry7ld.us-east-1.rds.amazonaws.com`
+2. Instalar paquetes de requisitos previos para que apt pueda usar paquetes por HTTPS  
+   
+   ```
+   sudo apt update  
+   sudo apt install apt-transport-https ca-certificates curl software-properties-common  
+   ```
 
-1. Abrir una conexión de consola con la instancia EC2 (usando ssh o por EC2 instance connect) 
+3. Instalar el repositorio de Docker
+   
+   ```
+   # Add Docker's official GPG key:
+   sudo apt-get update
+   sudo apt-get install ca-certificates curl
+   sudo install -m 0755 -d /etc/apt/keyrings
+   sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+   sudo chmod a+r /etc/apt/keyrings/docker.asc
+   
+   # Add the repository to Apt sources:
+   echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+   
+   sudo apt-get update
+   ```
 
-2. Ingresar los siguientes comandos:
+4. Instalar paquetes de Docker
+   
+   ```
+   sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+   ```
+
+5. Comprobar que el demonio Docker está corriendo
+   
+   ```
+   sudo systemctl status docker
+   ```
+
+6. Verificar la instalación de Docker Engine ejecutando la imagen “hello-world”
+   
+   ```
+   sudo docker run hello-world
+   ```
+
+7. Configurar Docker para arrancar automáticamente cuando se reinicia el sistema
+   
+   ```
+   sudo systemctl enable docker.service  
+   sudo systemctl enable containerd.service  
+   ```
+
+8. Instalar Docker Compose
+   
+   ```
+   sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+   
+   sudo chmod +x /usr/local/bin/docker-compose
+   
+   docker-compose --version
+   ```
+
+### 3.5. Probar conectividad de la instancia EC2 con la base de datos
+
+   Debe tener a mano el valor del endpoint de la base de datos copiado en el paso 1.
+
+   Ejemplo: `database-1.cjxro5kry7ld.us-east-1.rds.amazonaws.com`
+
+   `sudo docker run -it --rm mysql mysql -h<endpoint> -uadmin -p  -P3306`
+
+   Ejemplo:
+
+   `sudo docker run -it --rm mysql mysql -hdatabase-1.cjxro5kry7ld.us-east-1.rds.amazonaws.com -uadmin -p  -P3306`
+
+*Opcional: Probar conectividad instalando un cliente mysql en instancia EC2*
 
 ```
 sudo dnf update -y
@@ -209,8 +277,175 @@ sudo dnf install mariadb105
 mysql -h <endpoint> -u admin -p
 ```
 
-Ejemplo
+   Ejemplo
 
-`mysql -h database-1.cjxro5kry7ld.us-east-1.rds.amazonaws.com -u admin -p`
+   `mysql -h database-1.cjxro5kry7ld.us-east-1.rds.amazonaws.com -u admin -p`
 
-Si está todo bien, se conectará a MySQL.
+   Si está todo bien, se conectará a MySQL.
+
+## 4. Instalacion de Wordpress en Contenedores y Nube
+
+### 4.1 Crear la base de datos de Wordpress
+
+Abrir sesion mysql e ingresar:
+
+```
+create user 'wp-user'@'%' identified by 'password';
+
+CREATE DATABASE `wordpress` DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci;
+
+grant all privileges on `wordpress`.* to 'wp-user'@'%';
+
+FLUSH PRIVILEGES;
+
+exit
+```
+
+### 4.2 Crear directorio en instancia para proyecto
+
+En la instancia EC2:
+
+```
+mkdir ~/wordpress
+cd ~/wordpress
+```
+
+### 4.3 Crear o editar archivo de variables de entorno
+
+`nano .env`
+
+Agregar las siguientes líneas (utiizar el <endpoint> configurado en el ejercicio anterior:
+
+```
+MYSQL_USER=wpuser
+
+MYSQL_PASSWORD=password
+
+DB_HOST=<endpoint>:3306
+
+DB_NAME=wordpress
+```
+
+### 4.3 Crear o editar archivo de configuración de nginx
+
+`nano nginx.conf`
+
+Agregar o revisar las siguientes líneas
+
+```
+server {
+
+        listen 80;
+
+        listen [::]:80;
+
+        server_name www.ejemplo.com;
+
+        index index.php index.html index.htm;
+
+        root /var/www/html;
+
+        location / {
+
+                try_files $uri $uri/ /index.php$is_args$args;
+
+        }
+
+        location ~ \.php$ {
+
+                try_files $uri =404;
+
+                fastcgi_split_path_info ^(.+\.php)(/.+)$;
+
+                fastcgi_pass wordpress:9000;
+
+                fastcgi_index index.php;
+
+                include fastcgi_params;
+
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+
+                fastcgi_param PATH_INFO $fastcgi_path_info;
+
+        }
+
+        location ~ /\.ht {
+
+                deny all;
+
+        }
+
+        location = /favicon.ico {
+
+                log_not_found off; access_log off;
+
+        }
+
+        location = /robots.txt {
+
+                log_not_found off; access_log off; allow all;
+
+        }
+
+        location ~* \.(css|gif|ico|jpeg|jpg|js|png)$ {
+
+                expires max;
+
+                log_not_found off;
+
+        }
+
+}
+```
+
+### 4.3 Crear o editar el archivo docker-compose.yaml
+
+Agregar las siguientes líneas:
+
+```
+version: '3'
+services:
+  wordpress:
+    image: wordpress:5.1.1-fpm-alpine
+    container_name: wordpress
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - WORDPRESS_DB_HOST=$DB_HOST
+      - WORDPRESS_DB_USER=$MYSQL_USER
+      - WORDPRESS_DB_PASSWORD=$MYSQL_PASSWORD
+      - WORDPRESS_DB_NAME=$DB_NAME
+    volumes:
+      - wordpress:/var/www/html
+    networks:
+      - app-network
+
+  webserver:
+    depends_on:
+      - wordpress
+    image: nginx:1.15.12-alpine
+    container_name: webserver
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - wordpress:/var/www/html
+      - ./nginx-conf:/etc/nginx/conf.d
+    networks:
+      - app-network
+volumes:
+    wordpress:
+networks:
+    app-network:
+        driver: bridge
+```
+
+### 4.4 Arrancar los contenedores
+
+`docker-compose up`
+
+### 4.5 Probar acceso al blog
+
+Con un explorador abrir:
+
+`http://<EC2 Instance Public IPv4 DNS>`
